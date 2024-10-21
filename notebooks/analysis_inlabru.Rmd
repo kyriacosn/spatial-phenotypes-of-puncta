@@ -1,0 +1,318 @@
+---
+title: "Spatial statistical modeling with inlabru"
+author: "Kyriacos Nicolaou (kyriakosn24@gmail.com)"
+date: "October 10, 2024"
+output: html_document
+---
+
+# Quantifying Spatial Phenotype of puncta
+
+## Introduction
+
+## Load Libraries
+
+We begin by loading the necessary libraries for spatial data handling, modeling, and visualization:
+
+-   [**sf**](https://r-spatial.github.io/sf/index.html): For handling spatial vector data (simple features).
+-   [**INLA**](**https://www.r-inla.org/**) and [**inlabru**](https://inlabru-org.github.io/inlabru/): For Bayesian inference using Integrated Nested Laplace Approximation.
+-   [**fmesher**](https://github.com/inlabru-org/fmesher): For creating spatial meshes, essential for continuous spatial models.
+-   [**ggplot2**](https://ggplot2.tidyverse.org/): For creating high-quality visualizations.
+-   [**terra**](https://rspatial.org/pkg/): For handling raster data efficiently.
+
+The function `bru_safe_sp(force = TRUE)` ensures compatibility with spatial objects when using **inlabru**.
+
+```{r message=FALSE}
+library(INLA)
+library(inlabru)
+library(sf)
+library(fmesher)
+library(ggplot2)
+library(terra)
+bru_safe_sp(force = TRUE)
+```
+
+## Read the Data
+
+We read the spatial data components essential for our analysis:
+
+Point Patterns: Locations of peroxisomes (`peroxisomes.geojson`). Boundaries: Cell boundaries defining the spatial domain (`domain.geojson`). Mesh Boxes: Used for creating spatial meshes (`meshbox.geojson`). Covariate Images: Environmental covariates loaded as raster data.
+
+```{r}
+path_to_data <- "../data/processed/inlabru_compatible/stitched_cells1-6/"
+
+peroxisomes <- st_read(paste0(path_to_data, "peroxisomes.geojson"),crs = NA)
+domain <- st_read(paste0(path_to_data, "domain.geojson"),crs = NA)
+boxes <- st_read(paste0(path_to_data, "meshbox.geojson"),crs = NA)
+
+mitochondria <- rast(paste0(path_to_data,"raw/mitochondria.tif"))
+er <- rast(paste0(path_to_data,"raw/er.tif"))
+fractional_distance <- rast(paste0(path_to_data,"distance/fractional distance.tif"))
+
+proximity_mitochondria <- rast(paste0(path_to_data,"proximity/mitochondria.tif"))
+```
+
+## Inspect the Imported Dataset
+
+Before moving on, we inspect the dataset to confirm that all data components were loaded successfully and that they align spatially as expected. In this visualization, we will:
+
+-   **Mesh Boxes**: Displayed as outlines to provide spatial context for the analysis domain.
+-   **Cell Boundaries**: Displayed in red the domain where we do the spatial analysis (cytosole).
+-   **Peroxisomes**: Displayed as points in dark green to indicate their locations within the cell.
+
+```{r}
+# Inspect the dataset visually to verify successful import and alignment
+ggplot() +
+  gg(boxes, alpha = 0) +  
+  gg(domain, fill = "red", alpha = 0.1) + 
+  gg(peroxisomes, color = "darkgreen")       
+```
+
+## Standardize the continuous covariates
+
+For the continuous covariate maps it is good practice to standardize them, such that the distribution of their pixel's values has a mean equal to zero and standard deviation equal to 1. This helps stabilize the inference process and makes the results more easy to interpret
+
+```{r}
+standardize <- function(raster_data, polygons) {
+
+  masked_raster <- mask(raster_data, polygons)
+  
+  values_within_polygons <- values(masked_raster, na.rm = TRUE)
+
+  mean_val <- mean(values_within_polygons)
+  sd_val <- sd(values_within_polygons)
+  
+  cells_in_polygons <- !is.na(values(masked_raster))
+  
+  all_values <- values(raster_data)
+  
+  all_values[cells_in_polygons] <- (all_values[cells_in_polygons] - mean_val)/sd_val
+  
+  all_values[!cells_in_polygons] <- 0
+  
+  standardized_raster <- raster_data
+  values(standardized_raster) <- all_values
+  
+  return(standardized_raster)
+}
+
+# standardize the continuous covariates
+mitochondria = standardize(mitochondria,domain)
+er = standardize(er,domain)
+fractional_distance = standardize(fractional_distance,domain)
+```
+
+## Choose Cells for the Analysis
+
+The data-set consists of 6 cells. Here, we will decide which cells to include for our model. Although we could filter out specific cells, for this analysis, we will include **all six cells** available in the data-set. The following code block filters the domains, boxes, and peroxisomes for a chosen list of cells. Moreover it makes sure to keep peroxisomes detected in the domains of interest
+
+Note: Filtering is **not necessary for the covariate raster objects**, as they inlabru will sample them based on their spatial locations automatically. As long as the raster objects are properly aligned with the spatial data, they will provide the required information for the specified regions.
+
+```{r}
+# Choose which cells to include in the analysis
+cell_indx <- c(1,2,3,4,5,6)
+
+# filter the boundaries and meshboxes for the selected cells
+domain <- domain[cell_indx, ]
+boxes <- boxes[cell_indx, ]
+
+# Filter puncta to include only those that are within the chosen boundaries
+inside.indx <- apply(st_intersects(peroxisomes, domain, sparse = FALSE),1, function(x) any(x))
+peroxisomes <- peroxisomes[inside.indx, ]  
+```
+
+## Mesh Construction
+
+An essential step in spatial analysis with **INLA** is the construction of a **spatial mesh** for the domain. Additionally, we build an **external mesh** to minimize artificial boundary effects on the random field. The construction of the mesh, requires an a list that includes the inner domain of interest and the boundary where the external mesh is bounded, moreover here we chose the maximum length of the edges in the mesh. The maximum edge length for the internal mesh triangles is set to **1 micrometer (μm)**. This value matches the spatial resolution of our covariate data, ensuring that important spatial features are represented accurately. For the external mesh, the maximum edge length is **4 μm** which helps avoiding artificial boundary effects while not increasing the computational cost by a lot. last there is a cutoff value for the minimum length of the mesh, which we set at **0.2 μm** to avoid the creation of overly small triangles, which can lead to numerical instability during the analysis.
+
+In the code below, we create the mesh using the `fm_mesh_2d_inla()` function, specifying the boundary and external mesh boxes.
+
+```{r}
+mesh <- fm_mesh_2d_inla(boundary = list(domain,boxes), max.edge = c(1, 4),cutoff = 0.2)
+
+```
+
+We plot the mesh and the peroxisomes to verify that the mesh accurately represents the spatial domain and that all objects (points, boundaries) are well-aligned within the mesh.
+
+```{r}
+ggplot() +
+  gg(mesh) +
+  gg(peroxisomes,color = "darkgreen")
+
+```
+
+## Modeling the spatial distribution of puncta
+
+To quantify the **spatial phenotype of peroxisomes**, we consider a model for the **mean density** of points. The model aims to explain how the peroxisomes are distributed in relation to various covariates such as other imaged components and hidden spatial variation which models hidden processes and structures. We model the presence of puncta with a log gaussian cox process with covariates. In particular the log of the mean density is a linear combination that involves the covariates and a zero-mean gaussian random field.
+
+Our model reads **mean density**:
+
+$$
+ \ln mean density = \beta_0 P_0(\mathbf{r}) + b_{MT} P_{MT}(\mathbf{r}) + b_{ER} P_{ER}(\mathbf{r}) + b_{FD} P_{FD}(\mathbf{r}) + GF(\mathbf{r}; \mu =0,\Sigma)
+$$
+
+where, $P_{\cdot}(\mathbf{r})$ are covariate maps and $\beta_{\cdot})$ coefficients for the following covariate maps - **`MT`**: Mitochondria - **`ER`**: Endoplasmic Reticulum (ER) - **`FD`**: Fractional Distance (relative distance between nucleus and cell boundary) - **`MP`**: Proximity to mitochondria, a binary map of the pixels that are at most $1\mu m$ away from a binary image of the mitochondria
+
+-   **Structured Random Effect**: `GF` represents the Gaussian Random Field with a mean of zero and a correlation structure. $Sigma$ which is of the Matern type, with a **smoothness parameter** of `α = 2`.2
+
+## Priors:
+
+-   **Fixed Effects**: We use a **non-informative prior**, which is the default in `inlabru`. This is a normal distribution with a mean of zero and a precision of `0.001`.
+-   **GRF Priors** (PC-prior):
+    -   **Standard Deviation (`σ`)**: We set `P(σ > 2) = 0.01`, implying a weak prior belief that the standard deviation should not exceed `2`.
+    -   **Correlation Length (`ρ`)**: We set `P(ρ < 1) = 0.01`, suggesting that the correlation length should be larger than **1 μm**.
+
+These priors are reasonable and weakly informative, given that we have no strong prior knowledge about the model parameters.
+
+```{r}
+matern <- inla.spde2.pcmatern(mesh, prior.sigma = c(2, 0.01), prior.range = c(1, 0.01))
+```
+
+## Model Construction
+
+We now construct the model by including all relevant components in a formula. This model integrates the random field, covariate information, and a global intercept term:
+
+-   **Random Field (`random.field`)**: Represents the latent spatial process, modeled using the Matern correlation structure (`matern`) we defined earlier. This field captures underlying spatial dependencies not explained by the covariates.
+-   **Covariates**:
+    -   **Mitochondria (`rast.mt`)**: Included as a linear effect.
+    -   **Endoplasmic Reticulum (`rast.er`)**: Included as a linear effect.
+    -   **Fractional Distance (`rast.fd`)**: Also included as a linear effect.
+-   **Intercept** (`Intercept(1)`): A global intercept term to capture the baseline log-density.
+
+Below is the code used to define the model:
+
+```{r}
+
+model<- geometry ~ 
+  random.field(geometry, model = matern) +
+  mitochondria + 
+  er + 
+  fractional_distance + 
+  proximity_mitochondria +
+  Intercept(1)
+
+
+```
+
+Next, we fit the **Log-Gaussian Cox Process (LGCP)** model using `inlabru`. This model allows us to analyze the spatial point pattern of peroxisomes by incorporating covariates, a random field, and an intercept. The LGCP framework is particularly useful for modeling count data or point patterns over continuous space, making it ideal for our spatial phenotype analysis.
+
+The inputs for fitting the model include:
+
+-   **Point Pattern (`peroxisomes`)**: Represents the locations of the peroxisomes, which is the target of our spatial modeling.
+-   **Spatial Domain (`boundary`)**: Specifies the spatial domain where the sampling takes place. This domain represents the boundaries of the cells.
+-   **Mesh (`mesh`)**: Represents the discretized version of the spatial domain, allowing us to compute the Gaussian Random Field (GRF) efficiently.
+
+The code snippet below demonstrates how to fit the model using the **`lgcp()`** function from `inlabru`. Note that fitting the model can be computationally intensive; in our case, it takes approximately 30 minutes when all cells are included.
+
+```{r}
+fit <- lgcp(model, peroxisomes ,samplers = domain , domain = list(geometry = mesh))
+```
+
+## Results
+
+we can view a summary of the results of fitting
+
+```{r paged.print=FALSE}
+summary(fit)
+```
+
+and plot the marginal posterior distributions of the parameters of the model
+
+```{r}
+multiplot(plot(fit, "Intercept"),
+          plot(fit, "fractional_distance"),
+          plot(fit, "mitochondria"),
+          plot(fit, "er"),
+          plot(fit, "proximity_mitochondria"),
+          plot(spde.posterior(fit, "random.field", what = "range")),
+          plot(spde.posterior(fit, "random.field", what = "variance")),
+          cols = 3
+          )
+```
+
+-   Intercept, the mean of the intercept is around -4, which means the mean density in the absence of everything is on average exp(-4)
+
+-   Fractional distance: the mode of the coeficient is around 0.7, which can be roughly interpreted as looking at it marginally the mean density near the nucleus is $e^{0.7}$ higher than at the border
+
+-   Mitochondria: There is no significant positive or negative correlation with the mitochondria themselves however there is a positive correlation to their proximity
+
+-   ER: the mean density has a positive association with the presense of ER, suggesting spatial association
+
+-   GRF: The GRF captures hidden variability not explained by the covariates. This variability has a length scale with mean of $18\mu m$ and it varies standard deviation of around $0.8$ meaning that hotspots ($GRF = \sigma$) have $e^{1.6}\approx 5$ times higher mean density than cold spots ($GRF = -\sigma$)
+
+we save the posterior marginals
+
+```{r}
+
+library(jsonlite)
+
+# sacing the results in a json format
+
+posterior_marginals <- list (
+  mitochondria =  list(pdf = fit$marginals.fixed$mitochondria, summary = fit$summary.fixed["mitochondria",]),
+  er           = list(pdf = fit$marginals.fixed$er,summary = fit$summary.fixed["er",]),
+  intercept    = list(pdf = fit$marginals.fixed$Intercept,summary = fit$summary.fixed["Intercept",]),
+  `mitochondria proximity` = list(pdf = fit$marginals.fixed$proximity_mitochondria,summary = fit$summary.fixed["proximity_mitochondria",]),
+  `proximity fraction` = list(pdf = fit$marginals.fixed$fractional_distance,summary = fit$summary.fixed["fractional_distance",]),
+  range = list(pdf = fit$marginals.hyperpar$`Range for random.field`,summary = fit$summary.hyperpar["Range for random.field",]),
+  `standard deviation` = list(pdf = fit$marginals.hyperpar$`Stdev for random.field`,summary = fit$summary.hyperpar["Stdev for random.field",])
+)
+  
+
+json_data <- toJSON(posterior_marginals, pretty = TRUE, auto_unbox = TRUE)
+
+# Write the JSON data to a file
+write(json_data, file =  "../data/output/marginals.json")
+
+```
+
+```{r}
+```
+
+next we will get the predicted GRF and the mean density by sampling from the posterior distribution
+
+```{r}
+
+# make mesh for prediction
+
+pred.df <- fm_pixels(mesh, mask = domain[3,],format =  "sp")
+```
+
+```{r}
+
+# setup prediction formulas 
+
+formulas <- ~ list(
+  rf = random.field ,
+  lambda = exp( random.field + mitochondria + er + fractional_distance + proximity_mitochondria +
+  Intercept))
+
+prediction <- predict(fit, pred.df,  formulas,   n.samples = 10,num.threads = 8) 
+```
+
+```{r}
+ggplot() +
+  gg(prediction$lambda, geom = "tile") 
+
+```
+
+```{r}
+ggplot() +
+  gg(prediction$rf, geom = "tile") 
+```
+
+```{r}
+
+# save the predicted mean density and random field in a raster
+
+path_to_output <-  "../data/output/"
+
+rast_stack_mean_density = rast(prediction$lambda)
+
+writeRaster(rast_stack_mean_density, filename = paste0(path_to_output,"predicted_mean_density.tif"),  overwrite = TRUE,  NAflag = NA)
+
+rast_stack_random_field = rast(prediction$rf)
+
+
+terra::writeRaster(x = rast_stack_random_field, filename = paste0(path_to_output,"predicted_random_field.tif"), overwrite = TRUE,  NAflag = NA)
+
+```
