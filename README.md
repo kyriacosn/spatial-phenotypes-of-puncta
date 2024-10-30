@@ -6,16 +6,10 @@ This project analyzes the spatial phenotypes of puncta (peroxisomes) in cells by
 - [Introduction](#introduction)
 - [Spatial Phenotypes Quantified](#spatial-phenotypes-quantified)
 - [Project Structure](#project-structure)
-- [Getting Started](#getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
+- [Prerequisites](#prerequisites)
 - [Running the Analysis](#running-the-analysis)
   - [1. Preprocessing](#1-preprocessing)
   - [2. Model Fitting](#2-model-fitting)
-- [Results](#results)
-- [Contributing](#contributing)
-- [License](#license)
-- [Acknowledgements](#acknowledgements)
 
 ## Introduction
 
@@ -34,15 +28,32 @@ Our LGCP model quantifies the following spatial phenotypes of peroxisomes:
 
 - **`data/raw/`**: Contains the raw images used for analysis.
 - **`data/processed/`**: Stores processed data outputs from the preprocessing notebook.
+- **`data/output/`**: Stores the results from the inference of the model.
 - **`notebooks/`**:
-  - **`preprocess.ipynb`**: Jupyter notebook for data preprocessing.
-  - **`analysis.Rmd`**: R Markdown notebook for model fitting and analysis.
+  - **`preprocessing.ipynb`**: Jupyter notebook for data preprocessing.
+  - **`analysis_inlabru.Rmd`**: R Markdown notebook for model fitting with the inlabru package.
+  - **`make_figures.ipynb`**: Jupyter notebook, to make nice figures of the data and infernence results
+- **`docs/`**: includes html files of the notebooks which are more convinient to read the steps of the analysis
+- **`figures/`**: some figures of the dataset and the results of the analysis
 
-## Getting Started
+## Prerequisites
 
-### Prerequisites
+To run the notebooks as they are you will need:
 
 - **Python 3.x** with Jupyter Notebook for preprocessing.
-- **R** with RStudio for model fitting.
-- Necessary Python and R packages (listed below).
+  - the packages: PIL, geopandas, shapely, rasterio, numpy, scipy, cv2, skimage, matplotlib.pyplot, and itertools
 
+the preprocessing and can be done also differently and with other packages, it is imortant however that the output from the preprocessign is readable/compatible with the packages in R
+
+- **R** with RStudio for model fitting.
+- the packages: INLA, inlabru, sf, fmesher, ggplot2, terra
+
+
+## Running the Analysis
+
+The main files to run the analsysis are preprocessing.ipynb and analysis_inlabru.Rmd. 
+
+  1. Preprocessing:
+    In this notebook we pinpoint the locations of peroxisomes from the fluoresence image, and we construct the predictive maps that depends on images of the nucleus, the ER and mitochondria. Last we stitch together the data from all the cells in a single spatial frame and we export them in a format compatible with the analysis that follows.
+  2. Model Fitting:
+    We fit a log gaussian cox process model through the inlabru package using the output of the preprocessing step. The steps of fitting invovle making a mesh of the spatial domain, constructing the model (how the mean density depends on the components) and finaly fitting with inlabru.
