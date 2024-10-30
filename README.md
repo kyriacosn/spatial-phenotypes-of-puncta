@@ -10,6 +10,8 @@ This project analyzes the spatial phenotypes of puncta (peroxisomes) in cells by
 - [Running the Analysis](#running-the-analysis)
   - [1. Preprocessing](#1-preprocessing)
   - [2. Model Fitting](#2-model-fitting)
+- [Dataset](#dataset)
+- [Results](#results)
 
 ## Introduction
 
@@ -56,3 +58,15 @@ The main files to run the analsysis are preprocessing.ipynb and analysis_inlabru
     In this notebook we pinpoint the locations of peroxisomes from the fluoresence image, and we construct the predictive maps that depends on images of the nucleus, the ER and mitochondria. Last we stitch together the data from all the cells in a single spatial frame and we export them in a format compatible with the analysis that follows.
   2. Model Fitting:
     We fit a log gaussian cox process model through the inlabru package using the output of the preprocessing step. The steps of fitting invovle making a mesh of the spatial domain, constructing the model (how the mean density depends on the components) and finaly fitting with inlabru.
+
+## Dataset
+
+At pannel A you can see fluoresence images of some of the channels, at pannel B the constructed maps used for the model and at pannel C is the dataset used in the model
+
+![Data](figures/data.png)
+
+## Results
+
+Pannel A we present the marginal posterior distributions of the parameters of the model, and at pannels B and C gaussian random field and mena density that the model predicts.
+
+![Results](figures/results.png)
