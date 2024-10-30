@@ -40,7 +40,7 @@ Our LGCP model quantifies the following spatial phenotypes of peroxisomes:
 
 To run the notebooks as they are you will need:
 
-- **Python 3** with Jupyter Notebook for preprocessing.
+- **Python** with Jupyter Notebook for preprocessing.
   - the packages: PIL, geopandas, shapely, rasterio, numpy, scipy, cv2, skimage, matplotlib.pyplot, and itertools
 
 the preprocessing and can be done also differently and with other packages, it is imortant however that the output from the preprocessign is readable/compatible with the packages in R
@@ -52,7 +52,7 @@ the preprocessing and can be done also differently and with other packages, it i
 
 The main files to run the analsysis are preprocessing.ipynb and analysis_inlabru.Rmd. 
 
-  1 Preprocessing:
+  1. Preprocessing:
     In this notebook we pinpoint the locations of peroxisomes from the fluoresence image, and we construct the predictive maps that depends on images of the nucleus, the ER and mitochondria. Last we stitch together the data from all the cells in a single spatial frame and we export them in a format compatible with the analysis that follows.
-  2 Model Fitting:
+  2. Model Fitting:
     We fit a log gaussian cox process model through the inlabru package using the output of the preprocessing step. The steps of fitting invovle making a mesh of the spatial domain, constructing the model (how the mean density depends on the components) and finaly fitting with inlabru.
