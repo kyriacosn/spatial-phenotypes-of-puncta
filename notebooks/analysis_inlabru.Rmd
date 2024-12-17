@@ -47,8 +47,12 @@ boxes <- st_read(paste0(path_to_data, "meshbox.geojson"),crs = NA)
 mitochondria <- rast(paste0(path_to_data,"raw/mitochondria.tif"))
 er <- rast(paste0(path_to_data,"raw/er.tif"))
 fractional_distance <- rast(paste0(path_to_data,"distance/fractional distance.tif"))
-
 proximity_mitochondria <- rast(paste0(path_to_data,"proximity/mitochondria.tif"))
+
+crs(mitochondria) <- NA
+crs(fractional_distance) <- NA
+crs(er) <- NA
+crs(proximity_mitochondria) <- NA
 ```
 
 ## Inspect the Imported Dataset
@@ -274,7 +278,20 @@ next we will get the predicted GRF and the mean density by sampling from the pos
 
 # make mesh for prediction
 
-pred.df <- fm_pixels(mesh, mask = domain[3,],format =  "sp")
+cell3 = domain[3,]
+
+
+
+# Filter puncta to include only those that are within cell4
+inside.indx <- apply(st_intersects(peroxisomes, cell3, sparse = FALSE),1, function(x) any(x))
+peroxisomes_cell3 <- peroxisomes[inside.indx, ]  
+```
+
+```{r}
+
+# create the prediction mesh
+pred.df <- fm_pixels(mesh, mask =cell3)
+
 ```
 
 ```{r}
@@ -286,33 +303,190 @@ formulas <- ~ list(
   lambda = exp( random.field + mitochondria + er + fractional_distance + proximity_mitochondria +
   Intercept))
 
-prediction <- predict(fit, pred.df,  formulas,   n.samples = 10,num.threads = 8) 
+prediction <- predict(fit, pred.df,  formulas,   n.samples = 100,num.threads = 8) 
+```
+
+```{r}
+
+grf.plot <- ggplot() +
+    gg(prediction$rf,geom = "tile") 
+grf.plot
+
+
+```
+
+```{r}
+mean_density.plot <- ggplot() +
+    gg(prediction$lambda,geom = "tile") 
+mean_density.plot
+```
+
+```{r}
+source(system.file(
+  file.path("misc", "2d_lgcp_residuals_functions_sf.R"),
+  package = "inlabru"))
+
+```
+
+```{r}
+# we partition the cell, in squares for the estimation of the residual
+residual_mesh <- partition(samplers = cell3, nrows = 5, ncols = 5)
+
+ggplot() +
+  gg(residual_mesh,fill = "red",alpha = 0.2)
+```
+
+```{r}
+residuals.prepare <- prepare_residual_calculations(
+  samplers = residual_mesh, domain = mesh,
+  observations = peroxisomes_cell3
+)
+```
+
+```{r}
+res <- predict(
+    object = fit,
+    newdata = residuals.prepare$df,
+    ~ {
+      lambda <- eval(expression( exp( random.field + mitochondria + er + fractional_distance + proximity_mitochondria +
+  Intercept)))
+      h3 <- 1 / sqrt(lambda)
+      data.frame(
+        Scaling_Residuals =
+           as.vector(residuals.prepare$A_sum %*% h3[obs]) -
+            as.vector(residuals.prepare$A_integrate %*% (h3 * lambda)[!obs])
+      )
+    },
+    n.samples = 100,num.threads = 8)
+```
+
+```{r}
+
 ```
 
 ```{r}
 ggplot() +
-  gg(prediction$lambda, geom = "tile") 
+  gg(residual_mesh, aes(fill = res$mean), alpha = 1)+
+  gg(peroxisomes_cell3)
+```
+
+```{r}
+plot.theme <- theme(
+    panel.grid = element_blank(),  
+    axis.ticks = element_blank(),  
+    axis.text = element_blank(),    
+    axis.title = element_blank(),
+    legend.position = "bottom",         
+    legend.direction = "horizontal",     
+    legend.box.margin = margin(t = -20, r = 0, b = 2, l = 0), 
+    legend.title = element_text(margin = margin(b = 5),size = 9),
+    legend.text = element_text(size = 9)  
+  )
+
+colorbar.guide = guide_colorbar(
+      direction = "horizontal",          # Arrange the color bar horizontally
+      title.position = "top",            # Position the title at the top of the color bar
+      title.hjust = 0.5,                 # Center the title
+      label.position = "bottom",         # Position the labels below the color bar
+      barwidth = unit(5, "cm"),          # Adjust the width of the color bar
+      barheight = unit(0.5, "cm")        # Adjust the height of the color bar
+    )
+```
+
+```{r}
+
+mean_density.plot<- ggplot(prediction$lambda) +
+  geom_sf(aes(color = mean), size = 0.1) +
+    scale_color_viridis_c(
+    option = "viridis",
+    limits = c(0,max(prediction$lambda$mean)),
+    name = "Predicted Mean Density",
+    guide = colorbar.guide) +
+  #         geom_sf(data = peroxisomes_cell3,color = "green")+
+  theme_minimal() +
+    plot.theme #+ 
+  annotate(
+#    "segment",
+#    x = 155, y = 92,
+#    xend = 155 + 10, yend = 92,
+#    color = "black", size = 1
+#  ) 
+
+mean_density.plot
 
 ```
 
 ```{r}
-ggplot() +
-  gg(prediction$rf, geom = "tile") 
+# Assuming 'prediction$rf' is your Simple Feature Collection (SFC) object
+grf.plot <- ggplot(prediction$rf) +
+  geom_sf(aes(color = mean),size = 0.2) +
+  geom_sf(data = peroxisomes_cell3,color = "green") +
+  scale_color_distiller(
+    palette = "RdBu",
+    direction = -1, 
+    limits = c(-1.6, 1.6),
+        oob = scales::squish,
+    name = "Predicted Random Field",
+    guide = colorbar.guide  
+  ) +
+  theme_minimal() +
+  plot.theme  +
+    annotate(
+    "segment",
+    x = 155, y = 92,
+    xend = 155 + 10, yend = 92,
+    color = "black", size = 1
+  ) 
+
+grf.plot
 ```
 
 ```{r}
 
-# save the predicted mean density and random field in a raster
+# Calculate the limit for symmetric color scaling
+limit <- max(c(abs(min(res$mean, na.rm = TRUE)), max(res$mean, na.rm = TRUE)))
 
-path_to_output <-  "../data/output/"
+ 
+residuals.plot <- ggplot() +
+  geom_sf(data = residual_mesh, aes(fill = res$mean), alpha = 1) +    
+  geom_sf(data = peroxisomes_cell3,color = "green") +                             
+   scale_fill_gradientn(
+  colours = rev(brewer.pal(9, "RdBu")),
+  name = "Pearson Residuals",
+  limits = c(-limit, limit),
+  guide =  colorbar.guide) +
+  theme_minimal() +
+  plot.theme +
+    annotate(
+    "segment",
+    x = 155, y = 92,
+    xend = 155 + 10, yend = 92,
+    color = "black", size = 1
+  ) 
 
-rast_stack_mean_density = rast(prediction$lambda)
+residuals.plot
+```
 
-writeRaster(rast_stack_mean_density, filename = paste0(path_to_output,"predicted_mean_density.tif"),  overwrite = TRUE,  NAflag = NA)
+```{r}
+combined_plot <- grf.plot + mean_density.plot + residuals.plot
+combined_plot
 
-rast_stack_random_field = rast(prediction$rf)
+```
 
+```{r}
+ggsave("../figures/peroxisomes_grf.svg",  
+       width = 6,height = 8,
+      units = "cm", 
+      plot = grf.plot)
 
-terra::writeRaster(x = rast_stack_random_field, filename = paste0(path_to_output,"predicted_random_field.tif"), overwrite = TRUE,  NAflag = NA)
+ggsave("../figures/peroxisomes_md.svg",  
+       width = 6,height = 8,
+      units = "cm", 
+      plot = mean_density.plot)
+
+ggsave("../figures/peroxisomes_res.svg",  
+       width = 6,height = 8,
+      units = "cm", 
+      plot = residuals.plot)
 
 ```
