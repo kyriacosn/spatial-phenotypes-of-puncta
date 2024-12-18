@@ -19,8 +19,9 @@ This project aims to make spatial modeling in biology more accessible by providi
 
 ## Spatial Phenotypes of simulated Diffusing Particles in a crowded Cell 
 
-<img src="figures/simulated_data_animation.gif" alt="Simulation Animation" width="50%"/>
-
+<div style="text-align: center;">
+  <img src="figures/simulated_data_animation.gif" alt="Simulation Animation" width="33%"/>
+</div>
 
 
 ## Spatial Phenotypes Quantified
