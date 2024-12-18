@@ -1,0 +1,476 @@
+---
+title: "Spatial Phenotype of particles of a simple biophysical model using LGCPs"
+author: "Kyriacos Nicolaou (kyriakosn24@gmail.com)"
+date: "12th of December, 2024"
+output: html_document
+---
+
+# Spatial Phenotype of particles of a simple biophysical model using LGCPs
+
+## Introduction
+
+Log Gaussian cox process models can capture hidden heterogeneity in the spatial distribution of points. Here we will evaluate the capacity of LGCPs in capturing spatial characteristics of a point pattern of particles that were generated with a simulation of a simple biophysical model. In our biophysical model we consider particles diffusing in a model of a cellular interior which is is modeled with two concentric disks the outer for the cell boundary and the inner for the nucleus. In the cellular interior we generate randomly placed crowders of a certain size, on which the particles cannot diffuse through, these crowders are hidden and we will try to infer their characterstics through the GRF component of the model. Moreover the particles are produce on the surface of the nucleus with a certain rate and they degrade with a certain rate. The production degradation dynamics lead to a gradient of particle density from the nucleus toward the cell boundary, we will try to capture this gradient with a predictor map which is the distance from the nucleus.
+
+## Load Libraries
+
+We begin by loading the necessary libraries for spatial data handling, modeling, and visualization:
+
+-   [**sf**](https://r-spatial.github.io/sf/index.html): For handling spatial vector data (simple features).
+-   [**INLA**](**https://www.r-inla.org/**) and [**inlabru**](https://inlabru-org.github.io/inlabru/): For Bayesian inference using Integrated Nested Laplace Approximation.
+-   [**fmesher**](https://github.com/inlabru-org/fmesher): For creating spatial meshes, essential for continuous spatial models.
+-   [**ggplot2**](https://ggplot2.tidyverse.org/): For creating high-quality visualizations.
+-   [**terra**](https://rspatial.org/pkg/): For handling raster data efficiently.
+
+The function `bru_safe_sp(force = TRUE)` ensures compatibility with spatial objects when using **inlabru**.
+
+```{r message=FALSE}
+library(INLA)
+library(inlabru)
+library(sf)
+library(fmesher)
+library(ggplot2)
+library(terra)
+bru_safe_sp(force = TRUE)
+```
+
+## Read the Data
+
+We read the spatial data components essential for our analysis:
+
+-   Point Patterns: Locations of particles(`particles.geojson`).
+
+-   Domain: Cell domain defined as the interior of the cell excluding the region of the nucleus (`domain.geojson`).
+
+-   Mesh Boxes: Used for creating spatial meshes (`meshbox.geojson`).
+
+-   Predictor maps: image of the distance from the nucleus (`nucleus_distance.tif`) and the image of the crowders (`crowders.tif)` , which we keep hidden from the model ( we keep it for validation though)
+
+```{r}
+path_to_data <- "../data/synthetic_data/diffusion_in_crowded_enviroment/"
+
+particles <- st_read(paste0(path_to_data, "particles.geojson"),crs = NA)
+domain <- st_read(paste0(path_to_data, "domain.geojson"),crs = NA)
+boxes <- st_read(paste0(path_to_data, "meshbox.geojson"),crs = NA)
+
+# read the predictor maps
+# remmber to set the coordinate system (crs) to NA
+nucleus_distance <- rast(paste0(path_to_data,"nucleus_distance.tif"))
+crs(nucleus_distance) <- NA
+crowders <- rast(paste0(path_to_data,"crowders.tif"))
+crs(crowders) <- NA
+
+```
+
+## Inspect the Imported Dataset
+
+Before moving on, we inspect the dataset to confirm that all data components were loaded successfully and that they align spatially as expected. In particular we will check the following:
+
+-   **Mesh Boxes**: Displayed as outlines to provide spatial context for the analysis domain.
+-   **Cell Boundaries**: Displayed in red the domain where we do the spatial analysis
+-   **Particles**: Displayed as points in dark green to indicate their locations within the cell.
+
+```{r}
+# Inspect the dataset visually to verify successful import and alignment
+ggplot() +
+  gg(boxes, alpha = 0) +  
+  gg(domain, fill = "red", alpha = 0.1) + 
+  gg(particles, color = "darkgreen")       
+```
+
+## Shift the distance from the nucleus map so that its mean is zero
+
+We shift the distance from the nucleus map so that its mean in zero in order to not to add an additional baseline to the model, which helps better intepretation effects and stabilizes the inference.
+
+```{r}
+set_mean_zero <- function(raster_data, polygons) {
+
+  masked_raster <- mask(raster_data, polygons)
+  
+  values_within_polygons <- values(masked_raster, na.rm = TRUE)
+  
+  mean_val <- mean(values_within_polygons)
+
+  cells_in_polygons <- !is.na(values(masked_raster))
+
+  all_values <- values(raster_data)
+  
+  all_values[cells_in_polygons] <- (all_values[cells_in_polygons] - mean_val)
+  
+  all_values[!cells_in_polygons] <- 0
+  
+  mean_zero_raster <- raster_data
+  
+  values(mean_zero_raster) <- all_values
+  
+  return(mean_zero_raster)
+}
+
+nucleus_distance = set_mean_zero(nucleus_distance,domain)
+```
+
+## Mesh Construction
+
+An essential step in spatial analysis with **INLA** and by extension **inlabru** is the construction of a **spatial mesh** for the domain. Additionally, we build an **external mesh** to minimize artificial boundary effects on the random field. The construction of the mesh, requires an a list that includes the inner domain of interest and the boundary where the external mesh is bounded, moreover here we chose the maximum length of the edges in the mesh. The maximum edge length for the internal mesh triangles is set to **0.1 units of length**. This value is expected to be sufficient to capture the spatial resolution of our covariate data, ensuring that important spatial features are represented accurately. For the external mesh, the maximum edge length is **0.6 units of length** which helps avoiding artificial boundary effects while not increasing the computational cost by a lot.
+
+In the code below, we create the mesh using the `fm_mesh_2d_inla()` function, specifying the boundary and external mesh boxes.
+
+```{r}
+mesh <- fm_mesh_2d_inla(boundary = list(domain,boxes), max.edge = c(0.1, 0.6),cutoff = 0.05)
+
+```
+
+We plot the mesh and the particles to verify that the mesh accurately represents the spatial domain and that all objects (points, boundaries) are well-aligned within the mesh.
+
+```{r}
+ggplot() +
+  gg(mesh) +
+  gg(particles,color = "darkgreen") 
+
+```
+
+## Modeling the spatial distribution of particles
+
+To quantify the **spatial phenotype of particles**, we consider a model for the **mean density** of points. The model aims to explain the dependance of the mean density to the distance from the nucleus, and the rest of the spatial heterogeneity with a Gaussian random field.
+
+Our model for the **mean density** reads
+
+$$
+ \ln \text{mean density} = \beta_0 P_0(\mathbf{r}) + b_{d} P_{d}(\mathbf{r}) + GRF(\mathbf{r}; \mu =0,\Sigma)
+$$
+
+where, $P_{\cdot}(\mathbf{r})$ are covariate maps and $\beta_{\cdot})$ coefficients for the following covariate maps, **`0`**: unbiased predictor map(intercept) **`d`**: distance from nucleus, and $GRF$ is the Gaussian random field, with mean zero and a correlation structure $\Sigma$ to be determined
+
+## Priors:
+
+-   **Fixed Effects**: We use a **non-informative prior**, which is the default in `inlabru`. This is a normal distribution with a mean of zero and a precision of `0.001`.
+-   **GRF Priors** (PC-prior):
+    -   **Standard Deviation (`σ`)**: We set `P(σ > 2) = 0.01`, implying a weak prior belief that the standard deviation doesnt exceed `2`.
+    -   **Correlation Length (`ρ`)**: We set `P(ρ < 0.01) = 0.01`, suggesting that the correlation length is larger than **0.01**. which is 1/100 of the cell radius.
+
+These priors are reasonable and weakly informative, given that we have no strong prior knowledge about the model parameters.
+
+```{r}
+matern <- inla.spde2.pcmatern(mesh, prior.sigma = c(2, 0.01), prior.range = c(0.01, 0.01))
+```
+
+## Model-0 
+
+Here as a test, we fit a model that has the distance from the nucleus and the image of the crowders and no GRF. $\ln \text{mean density} = \beta_0 P_0(\mathbf{r}) + \beta_{d} P_{d}(\mathbf{r}) + \beta_{cr} P_{cr}(\mathbf{r}) + GRF(\mathbf{r}; \mu =0,\Sigma)$ from this model as a reality check we expect to find a decreasing association to the distance from the nucleus $\beta_d <0$ and a strongly negative association to the presence of crowders $\beta_{cr} < 0$
+
+Below is the code used to define and fit the model:
+
+```{r}
+model_zero <- geometry ~ 
+  nucleus_distance + 
+  crowders +
+  Intercept(1)
+
+fit_zero <- lgcp(model_zero, particles ,samplers = domain , domain = list(geometry = mesh))
+
+```
+
+```{r}
+summary(fit_zero)
+```
+
+The characteristics of the inferred parameters are as expected.
+
+## Model
+
+Now we fit our model to uncover the heterogeneity in the particles caused by the crowders using a GRF
+
+$$
+ \ln \text{mean density} = \beta_0 P_0(\mathbf{r}) + b_{d} P_{d}(\mathbf{r}) + GRF(\mathbf{r}; \mu =0,\Sigma)
+$$
+
+```{r}
+model_hidden_crowders <- geometry ~ 
+  random.field(geometry, model = matern) +
+  nucleus_distance + 
+  Intercept(1)
+
+fit_hidden_crowders <- lgcp(model_hidden_crowders, particles ,samplers = domain, domain = list(geometry = mesh))
+```
+
+## Results: Marginal posteriors
+
+lets print the results
+
+```{r paged.print=FALSE}
+summary(fit_hidden_crowders)
+```
+
+also plot the marginal distributions
+
+```{r paged.print=FALSE}
+
+multiplot(plot(fit_hidden_crowders, "Intercept"),
+          plot(fit_hidden_crowders, "nucleus_distance"),
+          plot(spde.posterior(fit_hidden_crowders, "random.field", what = "range")),
+          plot(spde.posterior(fit_hidden_crowders, "random.field", what = "variance")),
+          cols = 2
+          )
+```
+
+interestingly we capture the following characteristics:
+
+1.  The dependence of the distance from nucleus to the mean density is exactly the same as if we considered $e^{-\sqrt{\frac{k_d}{D}} r}$ , where $<\beta_d> = -1.7 \approx -\sqrt{\frac{k_d}{D}} = 1.82$
+2.  The characteristics of the GRF meant to capture the heterogeneity due to crowders are a $\sigma$ with a mean of $0.6$ which corresponds to a 3 fold difference between hotspots and coldspots. And a correlation length of around 0.6, this value we expect that it combines different relevant length scales of the crowding process and the geometry of the cell, to see better how the heterogeneity is captured we will predict the random field on one of the cells
+
+we save the marginal posterior distributions
+
+```{r}
+library(jsonlite)
+# save the results in a json format
+
+posterior_marginals <- list (
+ intercept    = list(pdf = fit_hidden_crowders$marginals.fixed$Intercept,summary = fit_hidden_crowders$summary.fixed["Intercept",]),
+ 
+  distance    = list(pdf = fit_hidden_crowders$marginals.fixed$nucleus_distance,summary = fit_hidden_crowders$summary.fixed["nucleus_distance",]),
+ 
+  range = list(pdf = fit_hidden_crowders$marginals.hyperpar$`Range for random.field`,summary = fit_hidden_crowders$summary.hyperpar["Range for random.field",]),
+  `standard deviation` = list(pdf = fit_hidden_crowders$marginals.hyperpar$`Stdev for random.field`,summary = fit_hidden_crowders$summary.hyperpar["Stdev for random.field",])
+)
+  
+json_data <- toJSON(posterior_marginals, pretty = TRUE, auto_unbox = TRUE)
+
+# Write the JSON data to a file
+write(json_data, file =  "../data/synthetic_data/diffusion_in_crowded_enviroment/marginals.json")
+```
+
+## A small diversion: would the inference of the decay effect be affected in a model without the GRF?
+
+```{r}
+
+
+model_wo_GRF <- geometry ~ 
+  nucleus_distance + 
+  Intercept(1)
+
+fit_wo_GRF <- lgcp(model_wo_GRF, particles ,samplers = domain , domain = list(geometry = mesh))
+
+```
+
+```{r}
+print(fit_wo_GRF)
+```
+
+We see that the decay becomes more sharp, and the mean is more close to the real value. This could possibly imply that maybe (a small) part of the heterogeneity due to decay is captured by the GRF leading to a weaker effect for the covariate. Nevertheless the GRF component is important as we will see from the predictor maps, it can predict the presence of the hidden crowders to an extent
+
+## Results: Prediction
+
+Now we will predict the GRF and the mean density on one of the cells, to see the hidden spatial effects and how the different effects collectively make the mean density.
+
+```{r}
+
+cell4 = domain[4,]
+
+# Filter puncta to include only those that are within cell4
+inside.indx <- apply(st_intersects(particles, cell4, sparse = FALSE),1, function(x) any(x))
+paricles_cell4 <- particles[inside.indx, ]  
+
+ggplot() +
+  gg(cell4, fill = "red",alpha = 0.2) +
+  gg(paricles_cell4,color = "green")
+```
+
+```{r}
+
+pred.df <- fm_pixels(mesh, mask = cell4)
+
+formulas <- ~ list(
+  rf = random.field ,
+  lambda = exp( random.field + nucleus_distance + Intercept))
+
+prediction <- predict(fit_hidden_crowders, pred.df,  formulas,   n.samples = 100,num.threads = 8) 
+```
+
+lets plot the predicted random field,
+
+```{r}
+grf.plot <- ggplot() +
+    gg(prediction$rf,geom = "tile") 
+grf.plot
+
+```
+
+we now plot the image of the crowders, to compare
+
+```{r}
+ggplot() +
+  gg(crowders) +
+    gg(cell4, fill = "red", alpha = 0.3) 
+```
+
+We see that to an extent the absence/presence of crowders(which corresponds to presence/absence of particles) is partly captured by the GRF
+
+Now we will plot the predicted mean density, to see how the combined effect of the distance and the GRF contribute to the mean density
+
+```{r}
+mean_density.plot <- ggplot() +
+    gg(prediction$lambda,geom = "tile") 
+mean_density.plot
+```
+
+we see, that most of the mean density seems to be driven by the heterogeneity. However, the model picked up the diffusion decay length accurately through the randomness.
+
+Now we will calculate the raw residuals which are a meassure of how well the model captures the mean density
+
+To do that we need to load some functions
+
+```{r}
+source(system.file(
+  file.path("misc", "2d_lgcp_residuals_functions_sf.R"),
+  package = "inlabru"))
+
+```
+
+```{r}
+# we partition the cell, in squares for the estimation of the residual
+residual_mesh <- partition(samplers = cell4, nrows = 5, ncols = 5)
+
+ggplot() +
+  gg(residual_mesh,fill = "red",alpha = 0.2)
+
+```
+
+```{r}
+residuals.prepare <- prepare_residual_calculations(
+  samplers = residual_mesh, domain = mesh_cell_4,
+  observations = paricles_cell4
+)
+```
+
+```{r}
+  # Compute residuals
+res <- predict(
+    object = fit_hidden_crowders_cell4,
+    newdata = residuals.prepare$df,
+        ~ {
+      lambda <- eval(expression(exp( random.field + nucleus_distance + Intercept)))
+      h3 <- 1 / sqrt(lambda)
+      data.frame(
+        Scaling_Residuals =
+           as.vector(residuals.prepare$A_sum %*% h3[obs]) -
+            as.vector(residuals.prepare$A_integrate %*% (h3 * lambda)[!obs])
+      )
+    },
+    
+    n.samples = 100,num.threads = 8)
+```
+
+```{r}
+
+ggplot() +
+  gg(residual_mesh, aes(fill = res$mean), alpha = 1)
+  gg(paricles_cell4)
+```
+
+## Make nicer figures of the predictions
+
+In the rest of this notebook we will make the prediction figures nicer and save them
+
+```{r}
+plot.theme <- theme(
+    panel.grid = element_blank(),  
+    axis.ticks = element_blank(),  
+    axis.text = element_blank(),    
+    axis.title = element_blank(),
+    legend.position = "bottom",         
+    legend.direction = "horizontal",     
+    legend.box.margin = margin(t = -20, r = 0, b = 2, l = 0), 
+    legend.title = element_text(margin = margin(b = 5),size = 9),
+    legend.text = element_text(size = 9)  
+  )
+
+colorbar.guide = guide_colorbar(
+      direction = "horizontal",          # Arrange the color bar horizontally
+      title.position = "top",            # Position the title at the top of the color bar
+      title.hjust = 0.5,                 # Center the title
+      label.position = "bottom",         # Position the labels below the color bar
+      barwidth = unit(5, "cm"),          # Adjust the width of the color bar
+      barheight = unit(0.5, "cm")        # Adjust the height of the color bar
+    )
+```
+
+```{r}
+
+mean_density.plot<- ggplot(prediction$lambda) +
+  geom_sf(aes(color = mean)) +
+    geom_sf(data = paricles_cell4,color = "green") +
+    scale_color_viridis_c(
+    option = "viridis",
+    limits = c(0,max(prediction$lambda$mean)),
+    name = "Predicted Mean Density",
+    guide = colorbar.guide) +
+  theme_minimal() +
+    plot.theme
+
+mean_density.plot
+
+```
+
+```{r}
+
+# Assuming 'prediction$rf' is your Simple Feature Collection (SFC) object
+grf.plot <- ggplot(prediction$rf) +
+  geom_sf(aes(color = mean)) +
+  geom_sf(data = paricles_cell4,color = "green") +
+  scale_color_distiller(
+    palette = "RdBu",
+    direction = -1, 
+    limits = c(-1.1, 1.1),
+        oob = scales::squish,
+    name = "Predicted Random Field",
+    guide = colorbar.guide  
+  ) +
+  theme_minimal() +
+  plot.theme  
+
+grf.plot
+```
+
+```{r}
+
+# Calculate the limit for symmetric color scaling
+limit <- max(c(abs(min(res$mean, na.rm = TRUE)), max(res$mean, na.rm = TRUE)))
+
+
+
+ 
+residuals.plot <- ggplot() +
+  geom_sf(data = residual_mesh, aes(fill = res$mean), alpha = 1) +    
+  geom_sf(data = paricles_cell4,color = "green") +                                
+   scale_fill_gradientn(
+  colours = rev(brewer.pal(9, "RdBu")),
+  name = "Pearson Residuals",
+  limits = c(-limit, limit),
+  guide =  colorbar.guide) +
+  theme_minimal() +
+  plot.theme                                       
+
+residuals.plot
+```
+
+```{r}
+combined_plot <- grf.plot + mean_density.plot + residuals.plot
+combined_plot
+```
+
+```{r}
+ggsave("../figures/simulation_grf.svg",  
+       width = 5,height = 7,
+      units = "cm", 
+      plot = grf.plot)
+
+ggsave("../figures/simulation_md.svg",  
+       width = 5,height = 7,
+      units = "cm", 
+      plot = mean_density.plot)
+
+ggsave("../figures/simulation_res.svg",  
+       width = 5,height = 7,
+      units = "cm", 
+      plot = residuals.plot)
+
+```
