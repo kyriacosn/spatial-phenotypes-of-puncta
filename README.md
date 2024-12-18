@@ -51,6 +51,17 @@ The system is simulated until it reaches stationarity, after which a snapshot of
 For our full dataset we take 9 snapshots each from a different realization of cellular enviroment (different crowder configurations)
 
 
+Fitting our model captures to an extent the heterogeneity due to the hidden crowders
+
+<p align="center">
+![Alt Text](figures/simulation_grf.svg)
+</p>
+
+and we quantify the spatial phenotype of the point patterns. The figure bellow summarizes the simulations, marginal posterior distributions and predicted fields
+
+<p align="center">
+![Alt Text](figures/figure_simulations.svg)
+</p>
 
 
 ## Spatial Phenotypes of peroxisomes
