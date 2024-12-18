@@ -17,6 +17,12 @@ This project analyzes the spatial phenotypes of puncta (peroxisomes) in cells by
 
 This project aims to make spatial modeling in biology more accessible by providing step-by-step notebooks on analyzing point patterns of peroxisomes within cells. By incorporating predictors related to the ER and mitochondria, we can quantify specific spatial phenotypes.
 
+## Spatial Phenotypes of simulated Diffusing Particles in a crowded Cell 
+
+![Simulation Animation](figures/simulation_animation.gif)
+
+
+
 ## Spatial Phenotypes Quantified
 
 Our LGCP model quantifies the following spatial phenotypes of peroxisomes:
