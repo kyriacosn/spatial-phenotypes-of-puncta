@@ -321,7 +321,7 @@ mean_density.plot <- ggplot() +
 mean_density.plot
 ```
 
-Now we will calculate the raw residuals which are a meassure of how well the model captures the mean density. To do that we follow the steps in this vignette: [Residual Analysis of spatial point process models using Bayesian methods](https://inlabru-org.github.io/inlabru/articles/2d_lgcp_residuals_sf.html)
+Now we will calculate the Pearson residuals which are a meassure of how well the model captures the mean density. To do that we follow the steps in this vignette: [Residual Analysis of spatial point process models using Bayesian methods](https://inlabru-org.github.io/inlabru/articles/2d_lgcp_residuals_sf.html)
 
 To do that we need to load some functions
 

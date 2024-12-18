@@ -153,7 +153,7 @@ These priors are reasonable and weakly informative, given that we have no strong
 matern <- inla.spde2.pcmatern(mesh, prior.sigma = c(2, 0.01), prior.range = c(0.01, 0.01))
 ```
 
-## Model-0 
+## Model-0
 
 Here as a test, we fit a model that has the distance from the nucleus and the image of the crowders and no GRF. $\ln \text{mean density} = \beta_0 P_0(\mathbf{r}) + \beta_{d} P_{d}(\mathbf{r}) + \beta_{cr} P_{cr}(\mathbf{r}) + GRF(\mathbf{r}; \mu =0,\Sigma)$ from this model as a reality check we expect to find a decreasing association to the distance from the nucleus $\beta_d <0$ and a strongly negative association to the presence of crowders $\beta_{cr} < 0$
 
@@ -315,7 +315,7 @@ mean_density.plot
 
 we see, that most of the mean density seems to be driven by the heterogeneity. However, the model picked up the diffusion decay length accurately through the randomness.
 
-Now we will calculate the raw residuals which are a meassure of how well the model captures the mean density
+Now we will calculate the Pearson residuals which are a meassure of how well the model captures the mean density. To do that we follow the steps in this vignette: [Residual Analysis of spatial point process models using Bayesian methods](https://inlabru-org.github.io/inlabru/articles/2d_lgcp_residuals_sf.html)
 
 To do that we need to load some functions
 
@@ -343,7 +343,7 @@ residuals.prepare <- prepare_residual_calculations(
 ```
 
 ```{r}
-  # Compute residuals
+# Compute residuals
 res <- predict(
     object = fit_hidden_crowders_cell4,
     newdata = residuals.prepare$df,
@@ -351,7 +351,7 @@ res <- predict(
       lambda <- eval(expression(exp( random.field + nucleus_distance + Intercept)))
       h3 <- 1 / sqrt(lambda)
       data.frame(
-        Scaling_Residuals =
+        Pearson_Residuals =
            as.vector(residuals.prepare$A_sum %*% h3[obs]) -
             as.vector(residuals.prepare$A_integrate %*% (h3 * lambda)[!obs])
       )
@@ -359,6 +359,8 @@ res <- predict(
     
     n.samples = 100,num.threads = 8)
 ```
+
+Lets plot the reisudual map
 
 ```{r}
 
