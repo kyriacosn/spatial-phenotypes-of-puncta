@@ -282,6 +282,7 @@ formulas <- ~ list(
   rf = random.field ,
   lambda = exp( random.field + nucleus_distance + Intercept))
 
+
 prediction <- predict(fit_hidden_crowders, pred.df,  formulas,   n.samples = 100,num.threads = 8) 
 ```
 

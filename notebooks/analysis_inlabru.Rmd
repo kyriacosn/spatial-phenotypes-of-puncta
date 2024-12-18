@@ -321,6 +321,10 @@ mean_density.plot <- ggplot() +
 mean_density.plot
 ```
 
+Now we will calculate the raw residuals which are a meassure of how well the model captures the mean density. To do that we follow the steps in this vignette: [Residual Analysis of spatial point process models using Bayesian methods](https://inlabru-org.github.io/inlabru/articles/2d_lgcp_residuals_sf.html)
+
+To do that we need to load some functions
+
 ```{r}
 source(system.file(
   file.path("misc", "2d_lgcp_residuals_functions_sf.R"),
@@ -370,6 +374,12 @@ ggplot() +
   gg(peroxisomes_cell3)
 ```
 
+Here we see that the residuals, are often beyond the range of (-2,2), which might be considered as a bad fit according to the pearson residuals. This is not unexpected as we fit the model on many cells as if they are realizations of a single process, in order to get the spatial phenotype of the population. However a model that considers cell to cell variation might capture individual cells better
+
+## Make nicer figures of the predictions
+
+In the rest of this notebook we will make the prediction figures nicer and save them
+
 ```{r}
 plot.theme <- theme(
     panel.grid = element_blank(),  
@@ -404,13 +414,13 @@ mean_density.plot<- ggplot(prediction$lambda) +
     guide = colorbar.guide) +
   #         geom_sf(data = peroxisomes_cell3,color = "green")+
   theme_minimal() +
-    plot.theme #+ 
+    plot.theme + 
   annotate(
-#    "segment",
-#    x = 155, y = 92,
-#    xend = 155 + 10, yend = 92,
-#    color = "black", size = 1
-#  ) 
+    "segment",
+    x = 155, y = 92,
+    xend = 155 + 10, yend = 92,
+    color = "black", size = 1
+  ) 
 
 mean_density.plot
 
@@ -435,8 +445,7 @@ grf.plot <- ggplot(prediction$rf) +
     "segment",
     x = 155, y = 92,
     xend = 155 + 10, yend = 92,
-    color = "black", size = 1
-  ) 
+    color = "black", size = 1)
 
 grf.plot
 ```
