@@ -42,14 +42,13 @@ the preprocessing and can be done also differently and with other packages, it i
 
 We first simulate diffusing particles in a cell, represented by an annulus, where the inner circle represents the nucleus and the outer circle the cell membrane. In these cellular regions, we randomly place static crowders, causing particles to reflect upon crossing them. Additionally, we incorporate population dynamics by generating and spontaneously degrading particles. Particle generation occurs at random locations on the nucleus surface, ensuring that these locations are not covered by a crowder.
 
-The system is simulated until it reaches stationarity, after which a snapshot of the particle locations is taken for further analysis. We then **hide** the crowders from the dataset and aim to capture the heterogeneity they induce using our statistical model. In the model, we include the distance from the nucleus as a predictive map.
+The system is simulated until it reaches stationarity, after which a snapshot of the particle locations is taken for further analysis. We then **hide** the crowders from the dataset and aim to capture the heterogeneity they induce using our statistical model. In the model, we include the distance from the nucleus as a predictive map. To generate simulations look at `simulation_synthetic_dataset.ipynb`
 
 <p align="center">
   <img src="figures/simulated_data_animation.gif" alt="Simulation Animation" width="33%"/>
 </p>
 
 For our full dataset we take 9 snapshots each from a different realization of cellular enviroment (different crowder configurations)
-
 
 Fitting our model captures to an extent the heterogeneity due to the hidden crowders
 
@@ -58,7 +57,7 @@ Fitting our model captures to an extent the heterogeneity due to the hidden crow
 </p>
 
 
-and we quantify the spatial phenotype of the point patterns. The figure bellow summarizes the simulations, marginal posterior distributions and predicted fields
+and we quantify the spatial phenotype of the point patterns. The figure bellow summarizes the simulations, marginal posterior distributions and predicted fields. For the full details on fitting look at `analysis_inlabru_synthetic_data.Rmd`
 
 <p align="center">
   <img src="figures/synthetic_data_results.png" alt="synthetic data results" width="60%"/>
