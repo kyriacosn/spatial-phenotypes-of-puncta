@@ -53,11 +53,11 @@ For our full dataset we take 9 snapshots each from a different realization of ce
 
 Fitting our model captures to an extent the heterogeneity due to the hidden crowders
 
-![Alt Text](figures/simulation_grf.svg)
+![predicted grf simulation](figures/simulation_grf.png)
 
 and we quantify the spatial phenotype of the point patterns. The figure bellow summarizes the simulations, marginal posterior distributions and predicted fields
 
-![Alt Text](figures/figure_simulations.svg)
+![Alt Text](figures/synthetic_data_results.png)
 
 
 ## Spatial Phenotypes of peroxisomes
