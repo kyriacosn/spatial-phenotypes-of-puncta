@@ -283,7 +283,7 @@ formulas <- ~ list(
   lambda = exp( random.field + nucleus_distance + Intercept))
 
 
-prediction <- predict(fit_hidden_crowders, pred.df,  formulas,   n.samples = 100,num.threads = 8) 
+prediction <- predict(fit_hidden_crowders, pred.df,  formulas,   n.samples = 8,num.threads = 8) 
 ```
 
 lets plot the predicted random field,
@@ -331,13 +331,13 @@ source(system.file(
 residual_mesh <- partition(samplers = cell4, nrows = 5, ncols = 5)
 
 ggplot() +
-  gg(residual_mesh,fill = "red",alpha = 0.2)
-
+  gg(residual_mesh,fill = "red",alpha = 0.2)+
+  gg(paricles_cell4)
 ```
 
 ```{r}
 residuals.prepare <- prepare_residual_calculations(
-  samplers = residual_mesh, domain = mesh_cell_4,
+  samplers = residual_mesh, domain = mesh,
   observations = paricles_cell4
 )
 ```
@@ -345,7 +345,7 @@ residuals.prepare <- prepare_residual_calculations(
 ```{r}
 # Compute residuals
 res <- predict(
-    object = fit_hidden_crowders_cell4,
+    object = fit_hidden_crowders,
     newdata = residuals.prepare$df,
         ~ {
       lambda <- eval(expression(exp( random.field + nucleus_distance + Intercept)))
@@ -357,7 +357,7 @@ res <- predict(
       )
     },
     
-    n.samples = 100,num.threads = 8)
+    n.samples = 8,num.threads = 8)
 ```
 
 Lets plot the reisudual map
@@ -461,19 +461,19 @@ combined_plot
 ```
 
 ```{r}
-ggsave("../figures/simulation_grf.svg",  
-       width = 5,height = 7,
-      units = "cm", 
-      plot = grf.plot)
+#ggsave("../figures/simulation_grf.svg",  
+#       width = 5,height = 7,
+#      units = "cm", 
+#      plot = grf.plot)
 
-ggsave("../figures/simulation_md.svg",  
-       width = 5,height = 7,
-      units = "cm", 
-      plot = mean_density.plot)
+#ggsave("../figures/simulation_md.svg",  
+#       width = 5,height = 7,
+#      units = "cm", 
+#      plot = mean_density.plot)
 
-ggsave("../figures/simulation_res.svg",  
-       width = 5,height = 7,
-      units = "cm", 
-      plot = residuals.plot)
+#ggsave("../figures/simulation_res.svg",  
+#       width = 5,height = 7,
+#      units = "cm", 
+#      plot = residuals.plot)
 
 ```
